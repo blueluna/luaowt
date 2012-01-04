@@ -15,6 +15,8 @@ local ltn12 = require("ltn12")
 local lpeg = require("lpeg")
 local json = require("json")
 require("logging.rolling_file")
+require("ks0066")
+require("sysinfo")
 
 -- logger
 local logger = logging.rolling_file("/tmp/luaowt.log", 65536, 3, "!%Y-%m-%d %H:%M:%S")
@@ -30,7 +32,7 @@ local pattern_hex_block = pattern_hex^2 * lpeg.P(' ')^1
 -- xx xx xx xx xx xx xx xx xx : crc=xx YES
 local w1_pattern1 = pattern_hex_block^9 * lpeg.P(': crc=') * pattern_hex^2 * lpeg.P(' ') * lpeg.C('YES') + lpeg.C('NO')
 -- xx xx xx xx xx xx xx xx xx t=nnnn
-local w1_pattern2 = pattern_hex_block^9 * lpeg.P('t=') * lpeg.C(lpeg.R('09')^1)
+local w1_pattern2 = pattern_hex_block^9 * lpeg.P('t=') * lpeg.C(lpeg.P('-')^-1 * lpeg.R('09')^1)
 -- helper for 11-223344556677 -> 11.776655443322
 local pattern_name_mangler = lpeg.C(pattern_hex^2) * lpeg.P('-') * lpeg.C(pattern_hex^-2) * lpeg.C(pattern_hex^-2)
 	* lpeg.C(pattern_hex^-2) * lpeg.C(pattern_hex^-2) * lpeg.C(pattern_hex^-2) * lpeg.C(pattern_hex^-2)
@@ -89,6 +91,23 @@ function name_mangler(device)
 	return string.upper(a..'.'..g..f..e..d..c..b)
 end
 
+function get_ipaddress()
+	local ipaddress = ''
+	local as = sysinfo.ipaddresses('eth0')
+	for k,v in pairs(as) do
+		ipaddress = v
+	end
+	return ipaddress
+end
+
+function lcd_write(temps)
+	local ipaddress = 'IP: '..get_ipaddress()
+	local string_diff = 20 - string.len(ipaddress)
+	ipaddress = ipaddress..string.rep(' ', string_diff)
+	local lcd = ks0066.new()
+	lcd:write(ipaddress..string.sub(temps, 0, 20))
+end
+
 -- read 1w devices
 function read_devices(path)
 	results = {}
@@ -112,10 +131,12 @@ function read_devices(path)
 			end
 		end
 	end
+	local temps = 'Temp:'
 	for name, result in pairs(results) do
 		if result.found then
 			if result.crc then
 				local device_name = name_mangler(name)
+				temps = temps..string.format('%5.1f ', result.value)
 				logger:info('Push tempterature '..result.value..' for '..name..' also called '..device_name)
 				send_temperature('http://coldstar.mine.nu/owtweb/rpc', device_name, result.value, result.timestamp)
 			else
@@ -123,6 +144,7 @@ function read_devices(path)
 			end
 		end
 	end
+	lcd_write(temps)
 	logger:info('done')
 end
 
